@@ -1,9 +1,7 @@
 *.log
 **/__pycache__
 *.txt
-tryout.py
 **~$
 *.xlsx
 *.png
 *.jpg
-Demo_Latex_Interface
