@@ -5,9 +5,13 @@
 # by: Joachim oPomper
 
 ### Import module and from modules #############################################
-from User_Input_Parse import InputParseTabular as ip_tabular
 import numpy as np
+import subprocess
+import os
 ################################################################################
+
+# path of pdflatex exe on Pc
+dir_pdf_latex = r'C:/texlive/2018/bin/win32/pdflatex'
 
 ### Define Classes #############################################################
 class Tabular:
@@ -25,7 +29,9 @@ class Tabular:
                                  'vertical'
         """
         ## Input parse ##
-        n_col, n_row = ip_tabular.test_init(values, uncertainty, alignment)
+        n_col, n_row = _InputParseTabular.test_init( values,
+                                                     uncertainty,
+                                                     alignment)
 
         ## Setup tablular content from input data as horizontal table ##
         data = []; # init list
@@ -78,7 +84,7 @@ class Tabular:
         Used to change visibility settings for .print() methods of a
         instance of class \"Tabular\" """
         ## Input Parse ##
-        ip_tabular.test_config(disp_col_names, disp_row_names)
+        _InputParseTabular.test_config(disp_col_names, disp_row_names)
 
         ## change Settings ##
         this.disp_col_names = disp_col_names
@@ -86,7 +92,7 @@ class Tabular:
 
     def editColNames(this, names):
         # input parse
-        ip_tabular.test_addNames(names, this.n_col)
+        _InputParseTabular.test_addNames(names, this.n_col)
 
         # update col_names
         n_names = len(names)
@@ -107,7 +113,7 @@ class Tabular:
 
     def editRowNames(this, names):
         # input parse
-        ip_tabular.test_addNames(names, this.n_row)
+        _InputParseTabular.test_addNames(names, this.n_row)
 
         # update col_names
         n_names = len(names)
@@ -243,8 +249,8 @@ class Tabular:
     def addColumn(this, values, uncertainty = [], pos = [], name = 'new_col'):
 
         ## Input parse ##
-        ip_tabular.test_addData(values, uncertainty, pos, this.n_row, name)
-
+        _InputParseTabular.test_addData( values, uncertainty,
+                                        pos, this.n_row, name)
         ## add data ##
         if not uncertainty:
             uncertainty = [0]*len(values)
@@ -276,7 +282,8 @@ class Tabular:
     def addRow(this, values, uncertainty = [], pos = [], name = 'new_row'):
 
         ## Input parse ##
-        ip_tabular.test_addData(values, uncertainty, pos, this.n_col, name)
+        _InputParseTabular.test_addData(values, uncertainty,
+                                        pos, this.n_col, name)
 
         ## add data ##
         if not uncertainty:
@@ -310,9 +317,50 @@ class LatexTabular(Tabular):
     def __init__(this, values, uncertainty, alignment = 'horizontal'):
         super().__init__(values, uncertainty, alignment)
 
-    def write(this, filename, delimiter = ','):
+    def write(this, filename, mode = "w+", delimiter = ',' , encoding = 'utf8'):
 
-        file = open(filename, "w+", encoding='utf8')
+        file = open(filename, mode, encoding = encoding)
+        this.__write_tabular_to_file(file, delimiter)
+        file.close()
+
+    def preview(this, delimiter = ','):
+
+        cwd = os.getcwd()
+        file_path = os.path.join(cwd, "tmp_tabular_preview.tex")
+        file = open(file_path, "w+", encoding = 'utf8')
+        file.write( "\\documentclass[11pt]{scrartcl} \n" +\
+                    "\\usepackage[utf8]{inputenc} \n" +\
+                    "\\usepackage[german]{babel} \n" +\
+                    "\\usepackage[T1]{fontenc} \n" +\
+                    "\\usepackage{float} \n \n" )
+        file.write( "\\begin{document} \n \n")
+
+        file.write( "\\begin{table} \n" + \
+                    "\\caption{Preview of created Table} \n" + \
+                    "\\centering")
+        file.write( "\\begin{tabular}")
+        n_col = this.n_col if this.disp_row_names else this.n_col - 1
+        file.write( "{" + "c|"*(n_col) +"c} \\hline \\hline \n")
+
+        this.__write_tabular_to_file(file, delimiter)
+
+        file.write( "\\\\ \\hline \\hline \n")
+        file.write( "\\end{tabular} \n" +\
+                    "\\end{table} \n \n"   )
+
+        file.write("\\end{document}")
+        file.close()
+
+        subprocess.check_call([dir_pdf_latex, file_path])
+        pdf_file_path = os.path.join(cwd, 'tmp_tabular_preview.pdf' )
+        os.remove(os.path.join(cwd, "tmp_tabular_preview.tex"))
+        os.remove(os.path.join(cwd, "tmp_tabular_preview.aux"))
+        os.remove(os.path.join(cwd, "tmp_tabular_preview.log"))
+        pdf_view = subprocess.Popen(['tmp_tabular_preview.pdf'],shell=True)
+        pdf_view.wait()
+
+    def __write_tabular_to_file(this, file, delimiter = ','):
+
         cs = this.cell_space
         pm = r"~\pm~"
 
@@ -350,61 +398,147 @@ class LatexTabular(Tabular):
                 elif idx_row < this.n_row -1:
                     file.write(" \\\\ \n")
 
-        file.close()
+### Input Parse ################################################################
 
-class LatexTabularX(Tabular):
+# define costume exception
+class DimensionError(Exception):
+    """ This error is raised if an input array has an unexpected size """
+    pass
 
-    def __init__(this, values, uncertainty, alignment = 'horizontal'):
-        super().__init__(values, uncertainty, alignment)
+# input parser for tabular class
+class _InputParseTabular:
+    """ InputParser for class Latex_Interface.Tabular
+    This is a static class """
 
-    def write(this, filename, delimiter = ','):
+    def test_init(values, uncertainty, alignment):
+        "Input parse for the method '__init__' of class Latex_Interface.Tabular"
 
-        file = open(filename, "w+", encoding='utf8')
-        cs = this.cell_space
-        pm = r"~\pm~"
 
-        file.write("\\begin{tabularx}{\\textwidth}")
-        file.write("{X" + "c|"*this.n_col +"cX} \\hline \\hline \n")
+        if type(values) is not list:
+            msg = ( "Input \"values\" has to be of type \"list\"")
+            raise TypeError(msg)
+        n_row = len(values)
+        n_col = 0
 
-        if this.disp_col_names:
-            file.write("& ")
+        if type(uncertainty) is not list:
+            msg = ( "Input \"uncertainty\" has to be of type \"list\"")
+            raise TypeError(msg)
 
-            if this.disp_row_names:
-                row_col_name = this.str2Tabularcell(this.row_col_name, cs)
-                file.write(row_col_name + " & ")
+        if n_row != len(uncertainty):
+            msg = ( "Input \"uncertainty\" has to be of same lenght"
+                    "as imput \"values\" ")
+            raise DimensionError(msg)
 
-            for idx_col, col_name in enumerate(this.col_names):
-                cell = this.str2Tabularcell(col_name, cs)
-                cell = "  " + cell + "  "
-                file.write(cell)
-                if idx_col < this.n_col - 1:
-                    file.write(" & ")
-                else:
-                    file.write(" & \\\\ \\hline \n")
+        for idx, val, unc in zip(range(n_row), values, uncertainty):
+            if type(val) is np.ndarray:
+                if np.shape(val) != (len(val),):
+                    msg = ( "Input \values\" must not contain more " +
+                            "more dimensional 'numpy.ndarrays'! ")
+            elif type(val) is not list:
+                msg = ( "Input \"values\" has to be nested list or a"
+                        "list of numpy.ndarrays")
+                raise TypeError(msg)
 
-        for idx_row, row in enumerate(this.content):
-            file.write("& ")
+            if type(unc) is np.ndarray:
+                if np.shape(unc) != (len(unc),):
+                    msg = ( "Input \"uncertainty\" must not contain more " +
+                            "more dimensional 'numpy.ndarrays'! ")
+            elif type(unc) is not list:
+                msg = ( "Input \"uncertainty\" has to be list of list"
+                        "or numpy.ndarrays")
+                raise TypeError(msg)
 
-            if this.disp_row_names:
-                row_name = this.row_names[idx_row]
-                cell = this.str2Tabularcell(row_name, cs)
-                cell = cell + " & "
-                file.write(cell)
+            if (len(unc) != len(val)) and (len(unc) != 0):
+                msg = ( "All lists or numpy.ndarrays nested in \"values\" "
+                        "and \"uncertainty\" have to be of same size pairwise. "
+                        "If it is intended that there is no uncertaity for"
+                        "one column/row, hand an empty list")
+                raise DimensionError(msg)
 
-            for idx_item, item in enumerate(row):
+            # calculate number of columns of table
+            n_col = max(n_col, len(val))
 
-                if type(item) is tuple:
-                    cell = this.tupel2Tabularcell(item, cs, delimiter, pm)
-                    cell = "$ " + cell +" $"
-                elif type(item) is str:
-                    cell = this.str2Tabularcell(item, cs+4)
-                file.write(cell)
+        if type(alignment) is not str:
+            msg = ( "Input \"alignment\" has to of type \"string\" ")
+            raise TypeError(msg)
 
-                if idx_item < this.n_col - 1:
-                    file.write(" & ")
-                elif idx_row < this.n_row -1:
-                    file.write(" & \\\\ \n")
+        if not (alignment == 'horizontal' or alignment == 'vertical'):
+            msg = ( "Value of Input \"alignment\" has to be either 'horizontal'"
+                    "or 'vertical'. ")
+            raise ValueError(msg)
 
-        file.write(" & \\\\ \\hline \\hline \n")
-        file.write("\\end{tabularx}")
-        file.close()
+        ## Return ##
+        return n_col, n_row
+
+    def test_config(disp_col_names, disp_row_names):
+        "Input parse for the method 'config' of class Latex_Interface.Tabular"
+
+        if type(disp_col_names) is not bool:
+            msg = "Input \"disp_col_names\" has to be of type \"bool\" "
+            raise TypeError(msg)
+
+        if type(disp_row_names) is not bool:
+            msg = "Input \"disp_row_names\" has to be of type \"bool\" "
+            raise TypeError(msg)
+
+    def test_addNames(names, n_names):
+        """Input parse for the methods 'editColNames' and 'editRowNames' of
+        class Latex_Interface.Tabular."""
+
+        # check type of input
+        if  type(names) is not list:
+            msg = ( "Input 'names' has to be a list of strings")
+            raise ValueError(msg)
+        for name in names:
+            if type(name) is not str:
+                msg = ( "Input 'names' has to be a list of strings")
+                raise ValueError(msg)
+
+        # check length of input
+        if len(names) > n_names + 1:
+            msg = ( "There are only" + str(n_names + 1) +
+                    "columns that can be named!" )
+            raise ValueError(msg)
+
+    def test_addData(values, uncertainty, pos, n_values, name):
+        """Input parse for the method 'addColumn' and 'addRow' of class
+        Latex_Interface.Tabular"""
+
+        if type(values) is np.ndarray:
+            if np.shape(values) != (len(values),):
+                msg = ( "Input \"Values\" must not contain more " +
+                        "more dimensional 'numpy.ndarrays'! ")
+        elif type(values) is not list:
+            msg = ( "Input \"Values\" has to be a list containing strings or" +
+                   "numbers or has to be a numpy.ndarray")
+            raise TypeError(msg)
+
+        if type(uncertainty) is np.ndarray:
+            if np.shape(uncertainty) != (len(uncertainty),):
+                msg = ( "Input \"uncertainty\" must not contain more " +
+                        "more dimensional 'numpy.ndarrays'! ")
+        elif type(uncertainty) is not list:
+            msg = ( "Input \"uncertainty\" has to be a list containing " +
+                    "strings or numbers or has to be a numpy.ndarray!")
+            raise TypeError(msg)
+
+        if not(0 <= pos <= n_values):
+            msg = ( "Input \"pos\" out of range!")
+            raise ValueError(msg)
+
+        if len(values) > n_values:
+            msg = ( "Input \"values\" has too many elements!")
+            raise DimensionError(msg)
+
+        if len(uncertainty) > n_values:
+            msg = ( "Input \"uncertainty\" has too many elemtes!")
+            raise DimensionError(msg)
+
+        if len(values) != len(uncertainty) and uncertainty :
+            msg = ( "Input \"uncertainty\" und Input \"values\" have to be " +
+                    "of same length!")
+            raise DimensionError(msg)
+
+        if type(name) is not str:
+            msg = ( "Input \"name\" has to be of type 'str'!")
+            raise TypeError(msg)
